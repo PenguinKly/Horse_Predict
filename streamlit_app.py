@@ -221,7 +221,7 @@ if action in ["predict_normal", "predict_ignore"]:
 
 # --- 功能 3：歷史回測 (精簡乾淨的 Wordle 條列風格) ---
 elif action == "backtest":
-    st.subheader(f"📊 歷史回測詳細報告 (簡潔風格) - {target_date} ({venue_code})")
+    st.subheader(f"📊 歷史回測詳細報告 - {target_date} ({venue_code})")
     with st.spinner("正在載入歷史賽果與記憶庫並執行回測分析..."):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         horse_memory, jockey_db, trainer_db, hj_dict = load_memory_databases()
