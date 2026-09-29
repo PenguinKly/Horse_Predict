@@ -221,8 +221,8 @@ if action in ["predict_normal", "predict_ignore"]:
 
 # --- 功能 3：歷史回測 ---
 elif action == "backtest":
-    st.subheader(f"📊 歷史回測報告 - {target_date} ({venue_code})")
-    with st.spinner("正在載入歷史賽果與記憶庫並執行回測驗證..."):
+    st.subheader(f"📊 歷史回測詳細報告 - {target_date} ({venue_code})")
+    with st.spinner("正在載入歷史賽果與記憶庫並執行詳細回測分析..."):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         horse_memory, jockey_db, trainer_db, hj_dict = load_memory_databases()
         model = load_ai_model()
@@ -301,11 +301,11 @@ elif action == "backtest":
                     ai_top4 = df_pred.head(4)['馬匹'].tolist()
                     ai_top2 = df_pred.head(2)['馬匹'].tolist()
                     actual_top4 = df_pred[df_pred['真實名次'] <= 4]['馬匹'].tolist()
-                    actual_winner = df_pred[df_pred['真實名次'] == 1]['馬匹'].tolist()[0] if len(df_pred[df_pred['真實名次'] == 1]) > 0 else ""
+                    actual_winner = df_pred[df_pred['真實名次'] == 1]['馬匹'].tolist()[0] if len(df_pred[df_pred['真實名次'] == 1]) > 0 else "無資料"
                     actual_rank_dict = dict(zip(df_pred['馬匹'], df_pred['真實名次']))
                     
                     total_races += 1
-                    if ai_top4 and actual_winner:
+                    if ai_top4 and actual_winner != "無資料":
                         if ai_top4[0] == actual_winner: ai_top1_hit += 1
                         if actual_winner in ai_top2: ai_top2_catch_win += 1
                     match_count = len(set(ai_top4) & set(actual_top4))
@@ -314,14 +314,30 @@ elif action == "backtest":
                     for i, h in enumerate(ai_top4):
                         if (i + 1) == actual_rank_dict.get(h, 99):
                             exact_match_count += 1
-                            
-                    st.markdown(f"**[ 第 {race_no} 場 ]** 真實冠軍: `{actual_winner}` | AI榜首: `{ai_top4[0] if ai_top4 else '無'}` | 前四名命中: `{match_count}/4`")
+                    
+                    # ✨ 詳細輸出每一場的推薦與真實結果對比
+                    st.markdown(f"### 🏁 [ 第 {race_no} 場 ]")
+                    winner_str = f"**{actual_winner}** (AI命中!)" if (ai_top4 and actual_winner == ai_top4[0]) else f"**{actual_winner}**"
+                    st.markdown(f"* **真實冠軍**: {winner_str} | **AI 第一推薦**: `{ai_top4[0] if ai_top4 else '無'}`")
+                    
+                    # 組合 AI 推薦前四名詳細名單顯示
+                    top4_display = []
+                    for h in ai_top4:
+                        r_rank = actual_rank_dict.get(h, 99)
+                        if r_rank == 1:
+                            top4_display.append(f"🟢 **{h}** (真實冠軍)")
+                        elif r_rank <= 4:
+                            top4_display.append(f"🟡 **{h}** (真實第{r_rank}名)")
+                        else:
+                            top4_display.append(f"{h} (落後)")
+                    st.markdown(f"* **AI 推薦前四名**: {', '.join(top4_display)}")
+                    st.markdown(f"* **命中真實前四名數量**: `{match_count}/4 匹`")
+                    st.divider()
             except:
                 pass
 
         if total_races > 0:
-            st.divider()
-            st.subheader("📈 回測績效總結")
+            st.subheader("📈 回測績效總結報告")
             m1, m2, m3, m4 = st.columns(4)
             m1.metric("單邊獨贏命中率", f"{ai_top1_hit}/{total_races}", f"{round((ai_top1_hit/total_races)*100,1)}%")
             m2.metric("頭馬涵蓋率 (前2名)", f"{ai_top2_catch_win}/{total_races}", f"{round((ai_top2_catch_win/total_races)*100,1)}%")
