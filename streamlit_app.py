@@ -346,10 +346,10 @@ elif action == "backtest":
         else:
             st.warning("找不到該日期的歷史賽果或尚未有完賽資料。")
 
-# --- 功能 4：AI 全面彩池智慧投注推薦 ---
+# --- 功能 4：AI 全面彩池智慧投注推薦 (含膽拖策略升級版) ---
 elif action == "recommend":
-    st.subheader(f"🎯 AI 全面彩池智慧投注推薦 - {target_date} ({venue_code})")
-    with st.spinner("正在連線賽馬會排位與賠率狀態，計算各彩池量化推薦組合..."):
+    st.subheader(f"🎯 AI 全面彩池智慧投注與膽拖推薦 - {target_date} ({venue_code})")
+    with st.spinner("正在連線賽馬會排位與賠率狀態，計算各彩池量化膽拖組合..."):
         today_races, horse_memory, jockey_db, trainer_db, hj_dict, model = fetch_race_cards(target_date, venue_code)
         
         if not today_races:
@@ -404,21 +404,25 @@ elif action == "recommend":
                 if len(df_pred) >= 4:
                     h1, h2, h3, h4 = df_pred.iloc[0], df_pred.iloc[1], df_pred.iloc[2], df_pred.iloc[3]
                     
-                    st.markdown(f"### 📌 [ {race_name} ] 熱門單場彩池推薦")
+                    st.markdown(f"### 📌 [ {race_name} ] AI 專業膽拖投注策略")
                     rec_col1, rec_col2 = st.columns(2)
+                    
                     with rec_col1:
                         st.markdown(f"""
-                        * **獨贏 (Win)**[cite: 6]: ({h1['馬號']}) {h1['馬匹']} (勝率: {h1['勝率']*100:.1f}%)
-                        * **位置 (Place)**[cite: 6]: ({h2['馬號']}) {h2['馬匹']} 或首選
-                        * **連贏 (Quinella)**[cite: 6]: ({h1['馬號']}) + ({h2['馬號']})
-                        * **位置Q (Q.Place)**[cite: 6]: ({h1['馬號']}), ({h2['馬號']}), ({h3['馬號']}) 複式
-                        * **二重彩 (Exacta)**[cite: 6]: ({h1['馬號']}) ➔ ({h2['馬號']})
+                        * **獨贏 (Win)**[cite: 6]: 
+                          * 核心推薦：({h1['馬號']}) {h1['馬匹']} (勝率: {h1['勝率']*100:.1f}%)
+                        * **連贏 / 位置Q (Quinella / Q.Place)**[cite: 6]: 
+                          * 膽拖策略：以 **{h1['馬號']} 號** 做膽，拖 **{h2['馬號']}、{h3['馬號']} 號** (共2注)
+                        * **二重彩 (Exacta)**[cite: 6]: 
+                          * 順序策略：({h1['馬號']} 冠軍) ➔ 拖 ({h2['馬號']}、{h3['馬號']} 亞軍)
                         """)
                     with rec_col2:
                         st.markdown(f"""
-                        * **三重彩 (Tricast)**[cite: 6]: ({h1['馬號']}) ➔ ({h2['馬號']}) ➔ ({h3['馬號']})
-                        * **單T (Tierce)**[cite: 6]: ({h1['馬號']}), ({h2['馬號']}), ({h3['馬號']}) 複式
-                        * **四連環 (First 4)**[cite: 6]: ({h1['馬號']}), ({h2['馬號']}), ({h3['馬號']}), ({h4['馬號']}) 複式
-                        * **四重彩 (Quartet)**[cite: 6]: ({h1['馬號']}) ➔ ({h2['馬號']}) ➔ ({h3['馬號']}) ➔ ({h4['馬號']})
+                        * **三重彩 / 單T (Tricast / Tierce)**[cite: 6]: 
+                          * 膽拖策略：以 **{h1['馬號']} 號** 做馬膽，配搭 **{h2['馬號']}、{h3['馬號']}、{h4['馬號']} 號** 為配腳
+                        * **四連環 (First 4)**[cite: 6]: 
+                          * 複式策略：({h1['馬號']}), ({h2['馬號']}), ({h3['馬號']}), ({h4['馬號']}) 四匹互聯複式
+                        * **四重彩 (Quartet)**[cite: 6]: 
+                          * 膽拖策略：以 **{h1['馬號']} 號** 做一馬膽，拖 **{h2['馬號']}、{h3['馬號']}、{h4['馬號']} 號**
                         """)
                     st.divider()
