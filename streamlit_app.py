@@ -207,7 +207,11 @@ if action in ["predict_normal", "predict_ignore"]:
             st.divider()
             st.subheader(f"🏆 {target_date} {venue_code} 預測結果 {mode_str}")
             
-            for name, group in final_predictions.groupby('場次'):
+            # ✨ 核心修正：將分組結果轉為 List，並強制提取裡面的數字進行大小排序
+            grouped = final_predictions.groupby('場次')
+            sorted_groups = sorted(grouped, key=lambda x: int(x[0].replace('第 ', '').replace(' 場', '')))
+            
+            for name, group in sorted_groups:
                 st.markdown(f"**[ {name} ] AI 戰術推薦前四名**")
                 sorted_group = group.sort_values(by='AI預測勝率(%)', ascending=False).head(4).drop(columns=['場次'])
                 sorted_group['AI預測勝率(%)'] = sorted_group['AI預測勝率(%)'].apply(lambda x: f"{x:.2f}%")
