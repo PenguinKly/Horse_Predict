@@ -219,10 +219,10 @@ if action in ["predict_normal", "predict_ignore"]:
                 sorted_group['AI預測勝率(%)'] = sorted_group['AI預測勝率(%)'].apply(lambda x: f"{x:.2f}%")
                 st.dataframe(sorted_group, hide_index=True, use_container_width=True)
 
-# --- 功能 3：歷史回測 ---
+# --- 功能 3：歷史回測 (Wordle 視覺化風格版) ---
 elif action == "backtest":
-    st.subheader(f"📊 歷史回測詳細報告 - {target_date} ({venue_code})")
-    with st.spinner("正在載入歷史賽果與記憶庫並執行詳細回測分析..."):
+    st.subheader(f"📊 歷史回測詳細報告 (Wordle 風格) - {target_date} ({venue_code})")
+    with st.spinner("正在載入歷史賽果與記憶庫並執行視覺化回測分析..."):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         horse_memory, jockey_db, trainer_db, hj_dict = load_memory_databases()
         model = load_ai_model()
@@ -315,22 +315,29 @@ elif action == "backtest":
                         if (i + 1) == actual_rank_dict.get(h, 99):
                             exact_match_count += 1
                     
-                    # ✨ 詳細輸出每一場的推薦與真實結果對比
+                    # ✨ Wordle 視覺化磚塊排版
                     st.markdown(f"### 🏁 [ 第 {race_no} 場 ]")
-                    winner_str = f"**{actual_winner}** (AI命中!)" if (ai_top4 and actual_winner == ai_top4[0]) else f"**{actual_winner}**"
-                    st.markdown(f"* **真實冠軍**: {winner_str} | **AI 第一推薦**: `{ai_top4[0] if ai_top4 else '無'}`")
                     
-                    # 組合 AI 推薦前四名詳細名單顯示
-                    top4_display = []
-                    for h in ai_top4:
+                    # 真實冠軍標示
+                    winner_html = f"<span style='color: #00e676; font-weight: bold;'>{actual_winner} (AI 命中🏆)</span>" if (ai_top4 and actual_winner == ai_top4[0]) else f"<span style='color: #ff4d4d; font-weight: bold;'>{actual_winner}</span>"
+                    st.markdown(f"* **真實冠軍**: {winner_html}", unsafe_allow_html=True)
+                    
+                    # AI 推薦前四名 Wordle 磚塊
+                    top4_html = []
+                    for idx, h in enumerate(ai_top4):
                         r_rank = actual_rank_dict.get(h, 99)
-                        if r_rank == 1:
-                            top4_display.append(f"🟢 **{h}** (真實冠軍)")
+                        ai_rank = idx + 1
+                        if ai_rank == r_rank:
+                            # 🟢 綠色：預測名次與真實名次分毫不差 (Exact Match)
+                            top4_html.append(f"<span style='background-color: #538d4e; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; margin-right: 5px;'>🟢 {h} (預測#{ai_rank} = 真實#{r_rank})</span>")
                         elif r_rank <= 4:
-                            top4_display.append(f"🟡 **{h}** (真實第{r_rank}名)")
+                            # 🟡 黃色：在前四名內但名次不同 (Top 4 Hit)
+                            top4_html.append(f"<span style='background-color: #b59f3b; color: white; padding: 4px 10px; border-radius: 6px; font-weight: bold; margin-right: 5px;'>🟡 {h} (預測#{ai_rank} / 真實#{r_rank})</span>")
                         else:
-                            top4_display.append(f"{h} (落後)")
-                    st.markdown(f"* **AI 推薦前四名**: {', '.join(top4_display)}")
+                            # ⬛ 灰色：未進前四
+                            top4_html.append(f"<span style='background-color: #3a3a3c; color: #a1a1a6; padding: 4px 10px; border-radius: 6px; margin-right: 5px;'>⬛ {h} (真實#{r_rank})</span>")
+                            
+                    st.markdown(f"* **AI 推薦前四名**: " + " ".join(top4_html), unsafe_allow_html=True)
                     st.markdown(f"* **命中真實前四名數量**: `{match_count}/4 匹`")
                     st.divider()
             except:
