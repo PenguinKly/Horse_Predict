@@ -1,5 +1,6 @@
 import streamlit as st
 import pandas as pd
+import numpy as np
 import xgboost as xgb
 import requests
 import io
@@ -11,7 +12,7 @@ warnings.filterwarnings('ignore')
 
 # 網頁基本設定 (設定標題、圖示、以及適應手機螢幕)
 st.set_page_config(
-    page_title="賽馬 AI 戰術預測系統",
+    page_title="賽馬 AI 戰術預測系統 (Ranker)",
     page_icon="🐎",
     layout="centered"
 )
@@ -30,8 +31,8 @@ def extract_horse_no(val):
 
 @st.cache_resource
 def load_ai_model():
-    """ 載入 10 維度純實力 AI 模型並加上快取 """
-    model = xgb.XGBClassifier()
+    """ 載入 12 維度 Ranker 排序 AI 模型並加上快取 """
+    model = xgb.XGBRanker()
     model.load_model("horse_racing_ai_model.json")
     return model
 
@@ -56,7 +57,7 @@ def load_memory_databases():
         
     return horse_mem, jockey_db, trainer_db, hj_dict
 
-# --- 共用排位表抓取函式 ---
+# --- 共用排位表抓取與特徵運算函式 (12 維度 + Ranker Softmax) ---
 def fetch_race_cards(date_str, venue_str):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36'}
     entries_url = f"https://racing.hkjc.com/zh-hk/local/information/entries?racedate={date_str}"
@@ -114,8 +115,8 @@ def fetch_race_cards(date_str, venue_str):
 
 
 # --- UI 介面設計 ---
-st.title("🐎 賽馬 AI 戰術預測系統")
-st.markdown("基於 XGBoost 機器學習，嚴格剔除目標洩漏，使用 **純賽前 10 維度特徵** 進行深度預測。")
+st.title("🐎 賽馬 AI 戰術預測系統 (Ranker)")
+st.markdown("基於 XGBRanker 機器學習，結合 **12 維度特徵**（含升降班幅度、相對場次優勢與騎師權重 0.6 衰減）進行同場精準排序。")
 
 st.divider()
 
@@ -159,11 +160,14 @@ if action in ["predict_normal", "predict_ignore"]:
         if not today_races:
             st.error(f"無法抓取 {target_date} 的排位表。可能是日期錯誤或賽事尚未公佈。")
         else:
-            st.success(f"成功連線！正在為 {len(today_races)} 場賽事進行純實力 10 維度 AI 運算...")
+            st.success(f"成功連線！正在為 {len(today_races)} 場賽事進行 12 維度 Ranker AI 運算...")
             predictions_list = []
             
             for race_no, race_df, name_to_id in today_races:
                 race_name = f"第 {race_no} 場"
+                race_avg_rating = race_df['評分'].mean()
+                race_features = []
+                horse_info = []
                 
                 for _, row in race_df.iterrows():
                     horse_name = row['馬匹']
@@ -177,37 +181,55 @@ if action in ["predict_normal", "predict_ignore"]:
                     t_win_rate = trainer_db.loc[trainer, '勝率'] if trainer in trainer_db.index else 0.08
                     hj_win_rate = hj_dict.get((horse_id, jockey), 0.08)
                     
+                    JOCKEY_DECAY_FACTOR = 0.6
                     if ignore_jockey:
                         j_win_rate, t_win_rate, hj_win_rate = 0.08, 0.08, 0.08
+                    else:
+                        j_win_rate = j_win_rate * JOCKEY_DECAY_FACTOR
+                        hj_win_rate = hj_win_rate * JOCKEY_DECAY_FACTOR
                         
-                    recent_rank, hist_win_rate, rest_days, weight_change = 7.0, 0.08, 30.0, 0.0
+                    recent_rank, hist_win_rate, rest_days, weight_change, last_rating = 7.0, 0.08, 30.0, 0.0, rating
                     if horse_id in horse_memory.index:
                         mem = horse_memory.loc[horse_id]
                         recent_rank = mem.get('近三仗平均名次', 7.0)
                         hist_win_rate = mem.get('歷史勝率', 0.08)
                         rest_days = mem.get('休賽天數', 30.0)
                         weight_change = mem.get('體重變化', 0.0)
+                        last_rating = mem.get('評分_數值', rating)
                     
-                    # ✨ 嚴格匹配 10 維度
+                    class_shift = rating - last_rating
+                    relative_advantage = rating - race_avg_rating
+                    
+                    # ✨ 嚴格匹配 12 維度特徵
                     features = {
                         '檔位_數值': row['檔位'], '負磅_數值': row['負磅'], '休賽天數': rest_days,
                         '體重變化': weight_change, '近三仗平均名次': recent_rank, '歷史勝率': hist_win_rate,
-                        '評分_數值': rating,
-                        '騎師勝率': float(j_win_rate), '練馬師勝率': float(t_win_rate), '人馬合作勝率': float(hj_win_rate)
+                        '評分_數值': rating, '騎師勝率': float(j_win_rate), '練馬師勝率': float(t_win_rate), 
+                        '人馬合作勝率': float(hj_win_rate), '升降班幅度': class_shift, '相對場次優勢': relative_advantage
                     }
-                    win_prob = model.predict_proba(pd.DataFrame([features]))[:, 1][0]
-                    
-                    predictions_list.append({
+                    race_features.append(features)
+                    horse_info.append({
                         '場次': race_name, '馬號': horse_no_val, '馬匹': horse_name,
-                        '騎師': jockey, '檔位': int(row['檔位']), '負磅': float(row['負磅']),
-                        '評分': int(rating), 'AI預測勝率(%)': round(win_prob * 100, 2)
+                        '騎師': jockey, '檔位': int(row['檔位']), '負磅': float(row['負磅']), '評分': int(rating)
                     })
+                
+                if race_features:
+                    features_df = pd.DataFrame(race_features)
+                    raw_scores = model.predict(features_df)
+                    
+                    # Softmax 機率轉換 (溫度參數 0.5)
+                    temperature = 0.5
+                    exp_scores = np.exp((raw_scores - np.max(raw_scores)) / temperature)
+                    win_probs = exp_scores / np.sum(exp_scores)
+                    
+                    for i, info in enumerate(horse_info):
+                        info['AI預測勝率(%)'] = round(win_probs[i] * 100, 2)
+                        predictions_list.append(info)
 
             final_predictions = pd.DataFrame(predictions_list)
             st.divider()
             st.subheader(f"🏆 {target_date} {venue_code} 預測結果 {mode_str}")
             
-            # ✨ 核心修正：將分組結果轉為 List，並強制提取裡面的數字進行大小排序
             grouped = final_predictions.groupby('場次')
             sorted_groups = sorted(grouped, key=lambda x: int(x[0].replace('第 ', '').replace(' 場', '')))
             
@@ -217,9 +239,9 @@ if action in ["predict_normal", "predict_ignore"]:
                 sorted_group['AI預測勝率(%)'] = sorted_group['AI預測勝率(%)'].apply(lambda x: f"{x:.2f}%")
                 st.dataframe(sorted_group, hide_index=True, use_container_width=True)
 
-# --- 功能 3：歷史回測 (精簡乾淨的 Wordle 條列風格) ---
+# --- 功能 3：歷史回測 ---
 elif action == "backtest":
-    st.subheader(f"📊 歷史回測詳細報告 (簡潔風格) - {target_date} ({venue_code})")
+    st.subheader(f"📊 歷史回測詳細報告 (Ranker 12維度) - {target_date} ({venue_code})")
     with st.spinner("正在載入歷史賽果與記憶庫並執行回測分析..."):
         headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64)'}
         horse_memory, jockey_db, trainer_db, hj_dict = load_memory_databases()
@@ -256,7 +278,18 @@ elif action == "backtest":
                         df_race.columns = df_race.columns.get_level_values(-1)
                     df_race = df_race[pd.to_numeric(df_race['名次'], errors='coerce').notnull()]
                     
-                    predictions_list = []
+                    race_features = []
+                    horse_info = []
+                    
+                    temp_ratings = []
+                    for _, row in df_race.iterrows():
+                        h_name = clean_name(row['馬名'])
+                        h_id = name_to_id.get(h_name, "")
+                        r = 52.0
+                        if h_id in horse_memory.index:
+                            r = horse_memory.loc[h_id].get('評分_數值', horse_memory.loc[h_id].get('評分', 52.0))
+                        temp_ratings.append(r)
+                    race_avg_rating = sum(temp_ratings) / len(temp_ratings) if temp_ratings else 52.0
                             
                     for _, row in df_race.iterrows():
                         horse_name = clean_name(row['馬名'])
@@ -268,28 +301,48 @@ elif action == "backtest":
                         j_win_rate = jockey_db.loc[jockey, '勝率'] if jockey in jockey_db.index else 0.08
                         t_win_rate = trainer_db.loc[trainer, '勝率'] if trainer in trainer_db.index else 0.08
                         hj_win_rate = hj_dict.get((horse_id, jockey), 0.08)
+                        
+                        JOCKEY_DECAY_FACTOR = 0.6
+                        j_win_rate = j_win_rate * JOCKEY_DECAY_FACTOR
+                        hj_win_rate = hj_win_rate * JOCKEY_DECAY_FACTOR
+                        
                         draw = pd.to_numeric(row.get('檔位', 7), errors='coerce')
                         weight = pd.to_numeric(row.get('實際負磅', 125), errors='coerce')
                         if pd.isna(draw): draw = 7.0
                         if pd.isna(weight): weight = 125.0
                         
-                        rating, recent_rank, hist_win_rate = 52.0, 7.0, 0.08
+                        rating, recent_rank, hist_win_rate, last_rating = 52.0, 7.0, 0.08, 52.0
                         if horse_id in horse_memory.index:
                             mem = horse_memory.loc[horse_id]
                             rating = mem.get('評分_數值', mem.get('評分', 52.0))
                             recent_rank = mem.get('近三仗平均名次', 7.0)
                             hist_win_rate = mem.get('歷史勝率', 0.08)
+                            last_rating = mem.get('評分_數值', rating)
                             
-                        # ✨ 嚴格匹配 10 維度
+                        class_shift = rating - last_rating
+                        relative_advantage = rating - race_avg_rating
+                        
+                        # ✨ 嚴格匹配 12 維度特徵
                         features = {
                             '檔位_數值': float(draw), '負磅_數值': float(weight), '休賽天數': 30.0, '體重變化': 0.0,
                             '近三仗平均名次': recent_rank, '歷史勝率': hist_win_rate, '評分_數值': float(rating),
-                            '騎師勝率': float(j_win_rate), '練馬師勝率': float(t_win_rate), '人馬合作勝率': float(hj_win_rate)
+                            '騎師勝率': float(j_win_rate), '練馬師勝率': float(t_win_rate), '人馬合作勝率': float(hj_win_rate),
+                            '升降班幅度': class_shift, '相對場次優勢': relative_advantage
                         }
-                        win_prob = model.predict_proba(pd.DataFrame([features]))[:, 1][0]
-                        predictions_list.append({'馬匹': horse_name, 'AI預測勝率': win_prob, '真實名次': actual_rank})
+                        race_features.append(features)
+                        horse_info.append({'馬匹': horse_name, '真實名次': actual_rank})
 
-                    df_pred = pd.DataFrame(predictions_list).sort_values(by='AI預測勝率', ascending=False)
+                    if race_features:
+                        features_df = pd.DataFrame(race_features)
+                        raw_scores = model.predict(features_df)
+                        temperature = 0.5 
+                        exp_scores = np.exp((raw_scores - np.max(raw_scores)) / temperature)
+                        win_probs = exp_scores / np.sum(exp_scores)
+                        
+                        for i, info in enumerate(horse_info):
+                            info['AI預測勝率'] = win_probs[i]
+
+                    df_pred = pd.DataFrame(horse_info).sort_values(by='AI預測勝率', ascending=False)
                     ai_top4 = df_pred.head(4)['馬匹'].tolist()
                     ai_top2 = df_pred.head(2)['馬匹'].tolist()
                     actual_top4 = df_pred[df_pred['真實名次'] <= 4]['馬匹'].tolist()
@@ -336,10 +389,10 @@ elif action == "backtest":
         else:
             st.warning("找不到該日期的歷史賽果或尚未有完賽資料。")
 
-# --- 功能 4：AI 全面彩池智慧投注推薦 (含膽拖策略升級版) ---
+# --- 功能 4：AI 全面彩池智慧投注推薦 (含膽拖策略) ---
 elif action == "recommend":
     st.subheader(f"🎯 AI 全面彩池智慧投注與膽拖推薦 - {target_date} ({venue_code})")
-    with st.spinner("正在連線賽馬會排位與賠率狀態，計算各彩池量化膽拖組合..."):
+    with st.spinner("正在連線賽馬會排位，計算各彩池量化膽拖組合..."):
         today_races, horse_memory, jockey_db, trainer_db, hj_dict, model = fetch_race_cards(target_date, venue_code)
         
         if not today_races:
@@ -347,7 +400,9 @@ elif action == "recommend":
         else:
             for race_no, race_df, name_to_id in today_races:
                 race_name = f"第 {race_no} 場"
-                predictions_list = []
+                race_avg_rating = race_df['評分'].mean()
+                race_features = []
+                horse_info = []
                 
                 for _, row in race_df.iterrows():
                     horse_name = row['馬匹']
@@ -360,52 +415,69 @@ elif action == "recommend":
                     t_win_rate = trainer_db.loc[row.get('練馬師_清理', '未知'), '勝率'] if row.get('練馬師_清理', '未知') in trainer_db.index else 0.08
                     hj_win_rate = hj_dict.get((horse_id, jockey), 0.08)
                     
-                    recent_rank, hist_win_rate, rest_days, weight_change = 7.0, 0.08, 30.0, 0.0
+                    JOCKEY_DECAY_FACTOR = 0.6
+                    j_win_rate = j_win_rate * JOCKEY_DECAY_FACTOR
+                    hj_win_rate = hj_win_rate * JOCKEY_DECAY_FACTOR
+                    
+                    recent_rank, hist_win_rate, rest_days, weight_change, last_rating = 7.0, 0.08, 30.0, 0.0, rating
                     if horse_id in horse_memory.index:
                         mem = horse_memory.loc[horse_id]
                         recent_rank = mem.get('近三仗平均名次', 7.0)
                         hist_win_rate = mem.get('歷史勝率', 0.08)
                         rest_days = mem.get('休賽天數', 30.0)
                         weight_change = mem.get('體重變化', 0.0)
+                        last_rating = mem.get('評分_數值', rating)
                         
-                    # ✨ 嚴格匹配 10 維度
+                    class_shift = rating - last_rating
+                    relative_advantage = rating - race_avg_rating
+                    
+                    # ✨ 嚴格匹配 12 維度特徵
                     features = {
                         '檔位_數值': row['檔位'], '負磅_數值': row['負磅'], '休賽天數': rest_days,
                         '體重變化': weight_change, '近三仗平均名次': recent_rank, '歷史勝率': hist_win_rate,
-                        '評分_數值': rating, 
-                        '騎師勝率': float(j_win_rate), '練馬師勝率': float(t_win_rate), '人馬合作勝率': float(hj_win_rate)
+                        '評分_數值': rating, '騎師勝率': float(j_win_rate), '練馬師勝率': float(t_win_rate), 
+                        '人馬合作勝率': float(hj_win_rate), '升降班幅度': class_shift, '相對場次優勢': relative_advantage
                     }
-                    win_prob = model.predict_proba(pd.DataFrame([features]))[:, 1][0]
-                    implied_odds = round(max(1.5, 0.85 / (win_prob + 0.001)), 2)
+                    race_features.append(features)
+                    horse_info.append({'馬號': horse_no_val, '馬匹': horse_name})
                     
-                    predictions_list.append({
-                        '馬號': horse_no_val, '馬匹': horse_name, '勝率': win_prob, '預估賠率': implied_odds
-                    })
+                if race_features:
+                    features_df = pd.DataFrame(race_features)
+                    raw_scores = model.predict(features_df)
+                    temperature = 0.5
+                    exp_scores = np.exp((raw_scores - np.max(raw_scores)) / temperature)
+                    win_probs = exp_scores / np.sum(exp_scores)
                     
-                df_pred = pd.DataFrame(predictions_list).sort_values(by='勝率', ascending=False).reset_index(drop=True)
-                
-                if len(df_pred) >= 4:
-                    h1, h2, h3, h4 = df_pred.iloc[0], df_pred.iloc[1], df_pred.iloc[2], df_pred.iloc[3]
+                    predictions_list = []
+                    for i, info in enumerate(horse_info):
+                        win_prob = win_probs[i]
+                        implied_odds = round(max(1.5, 0.85 / (win_prob + 0.001)), 2)
+                        predictions_list.append({'馬號': info['馬號'], '馬匹': info['馬匹'], '勝率': win_prob, '預估賠率': implied_odds})
                     
-                    st.markdown(f"### 📌 [ {race_name} ] AI 專業膽拖投注策略")
-                    rec_col1, rec_col2 = st.columns(2)
+                    df_pred = pd.DataFrame(predictions_list).sort_values(by='勝率', ascending=False).reset_index(drop=True)
                     
-                    with rec_col1:
-                        st.markdown(f"""
-                        * **獨贏 (Win)**: 
-                          * 核心推薦：({h1['馬號']}) {h1['馬匹']} (勝率: {h1['勝率']*100:.1f}%)
-                        * **連贏 / 位置Q (Quinella / Q.Place)**: 
-                          * 膽拖策略：以 **{h1['馬號']} 號** 做膽，拖 **{h2['馬號']}、{h3['馬號']} 號** (共2注)
-                        * **二重彩 (Exacta)**: 
-                          * 順序策略：({h1['馬號']} 冠軍) ➔ 拖 ({h2['馬號']}、{h3['馬號']} 亞軍)
-                        """)
-                    with rec_col2:
-                        st.markdown(f"""
-                        * **三重彩 / 單T (Tricast / Tierce)**: 
-                          * 膽拖策略：以 **{h1['馬號']} 號** 做馬膽，配搭 **{h2['馬號']}、{h3['馬號']}、{h4['馬號']} 號** 為配腳
-                        * **四連環 (First 4)**: 
-                          * 複式策略：({h1['馬號']}), ({h2['馬號']}), ({h3['馬號']}), ({h4['馬號']}) 四匹互聯複式
-                        * **四重彩 (Quartet)**: 
-                          * 膽拖策略：以 **{h1['馬號']} 號** 做一馬膽，拖 **{h2['馬號']}、{h3['馬號']}、{h4['馬號']} 號**
-                        """)
-                    st.divider()
+                    if len(df_pred) >= 4:
+                        h1, h2, h3, h4 = df_pred.iloc[0], df_pred.iloc[1], df_pred.iloc[2], df_pred.iloc[3]
+                        
+                        st.markdown(f"### 📌 [ {race_name} ] AI 專業膽拖投注策略")
+                        rec_col1, rec_col2 = st.columns(2)
+                        
+                        with rec_col1:
+                            st.markdown(f"""
+                            * **獨贏 (Win)**: 
+                              * 核心推薦：({h1['馬號']}) {h1['馬匹']} (勝率: {h1['勝率']*100:.1f}%)
+                            * **連贏 / 位置Q (Quinella / Q.Place)**: 
+                              * 膽拖策略：以 **{h1['馬號']} 號** 做膽，拖 **{h2['馬號']}、{h3['馬號']} 號** (共2注)
+                            * **二重彩 (Exacta)**: 
+                              * 順序策略：({h1['馬號']} 冠軍) ➔ 拖 ({h2['馬號']}、{h3['馬號']} 亞軍)
+                            """)
+                        with rec_col2:
+                            st.markdown(f"""
+                            * **三重彩 / 單T (Tricast / Tierce)**: 
+                              * 膽拖策略：以 **{h1['馬號']} 號** 做馬膽，配搭 **{h2['馬號']}、{h3['馬號']}、{h4['馬號']} 號** 為配腳
+                            * **四連環 (First 4)**: 
+                              * 複式策略：({h1['馬號']}), ({h2['馬號']}), ({h3['馬號']}), ({h4['馬號']}) 四匹互聯複式
+                            * **四重彩 (Quartet)**: 
+                              * 膽拖策略：以 **{h1['馬號']} 號** 做一馬膽，拖 **{h2['馬號']}、{h3['馬號']}、{h4['馬號']} 號**
+                            """)
+                        st.divider()
