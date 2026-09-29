@@ -74,8 +74,26 @@ with col2:
     venue = st.selectbox("賽事場地", options=["ST (沙田)", "HV (跑馬地)"])
     venue_code = venue.split(" ")[0]
 
+# --- 按鈕佈局與預測觸發 ---
+col_btn1, col_btn2 = st.columns(2)
+predict_clicked = False
+penalty_mode = False
+
+with col_btn1:
+    if st.button("🚀 普通預測", type="primary", use_container_width=True):
+        predict_clicked = True
+        penalty_mode = False
+
+with col_btn2:
+    if st.button("⚖️ 降低騎師權重", use_container_width=True):
+        predict_clicked = True
+        penalty_mode = True
+
 # --- 核心預測邏輯 ---
-if st.button("🚀 開始預測", type="primary", use_container_width=True):
+if predict_clicked:
+    if penalty_mode:
+        st.warning("⚠️ 已啟動「降低騎師權重」模式：AI 將大幅削弱騎師與人馬合作的影響力。")
+        
     with st.spinner("AI 正在連線賽馬會，讀取排位表與官方即時評分..."):
         model = load_ai_model()
         horse_memory, jockey_db, trainer_db, hj_dict = load_memory_databases()
@@ -179,6 +197,11 @@ if st.button("🚀 開始預測", type="primary", use_container_width=True):
                     t_win_rate = trainer_db.loc[trainer, '勝率'] if trainer in trainer_db.index else 0.08
                     hj_win_rate = hj_dict.get((horse_id, jockey), 0.08)
                     
+                    # 🔥 如果啟動了降權模式，大幅削減騎師與人馬默契的勝率影響
+                    if penalty_mode:
+                        j_win_rate = float(j_win_rate) * 0.5
+                        hj_win_rate = float(hj_win_rate) * 0.5
+                    
                     if rating >= 100 and horse_id not in horse_memory.index:
                         recent_rank, hist_win_rate, rest_days, weight_change, running_style = 3.0, 0.25, 60.0, 0.0, 2
                     else:
@@ -228,7 +251,8 @@ if st.button("🚀 開始預測", type="primary", use_container_width=True):
             sorted_groups = sorted(grouped, key=lambda x: int(x[0].replace('第 ', '').replace(' 場', '')))
             
             st.divider()
-            st.subheader(f"🏆 {target_date} {venue_code} 預測結果")
+            mode_text = "(降騎師權重模式)" if penalty_mode else ""
+            st.subheader(f"🏆 {target_date} {venue_code} 預測結果 {mode_text}")
             
             # 使用 Streamlit 內建的資料表格式顯示
             for name, group in sorted_groups:
