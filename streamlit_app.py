@@ -10,14 +10,12 @@ import warnings
 
 warnings.filterwarnings('ignore')
 
-# 網頁基本設定 (設定標題、圖示、以及適應手機螢幕)
 st.set_page_config(
-    page_title="賽馬 AI 戰術預測系統 (17維度)",
+    page_title="賽馬 AI 戰術預測系統 (17維度矩陣版)",
     page_icon="🐎",
     layout="wide"
 )
 
-# --- 輔助函式區域 ---
 def clean_person_name(val):
     return re.sub(r'\(.*?\)', '', str(val)).strip()
 
@@ -31,17 +29,13 @@ def extract_horse_no(val):
 
 @st.cache_resource
 def load_ai_model():
-    """ 載入 17 維度 Ranker 排序 AI 模型並加上快取 (極速載入) """
     model = xgb.XGBRanker()
-    try:
-        model.load_model("horse_racing_ai_model.json")
-    except Exception as e:
-        st.error(f"找不到模型檔案 horse_racing_ai_model.json！錯誤: {e}")
+    try: model.load_model("horse_racing_ai_model.json")
+    except: pass
     return model
 
 @st.cache_data
 def load_memory_databases():
-    """ 載入各種歷史記憶庫並加上快取 (記憶體常駐) """
     try:
         history_db = pd.read_csv("advanced_features.csv")
         horse_mem = history_db.drop_duplicates(subset=['馬匹編號'], keep='last').set_index('馬匹編號')
@@ -56,10 +50,8 @@ def load_memory_databases():
     except: hv_dict = {}
     try: hd_dict = pd.read_csv("horse_distance_stats.csv").set_index(['馬匹編號', '途程_數值'])['勝率'].to_dict()
     except: hd_dict = {}
-        
     return horse_mem, jockey_db, trainer_db, hj_dict, hv_dict, hd_dict
 
-# --- 核心：排位表抓取與 17 維度特徵運算 (實戰與推薦共用) ---
 def fetch_race_cards(date_str, venue_str, ignore_jockey=False):
     headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/119.0.0.0 Safari/537.36'}
     session = requests.Session()
@@ -139,21 +131,43 @@ def fetch_race_cards(date_str, venue_str, ignore_jockey=False):
                         '同程勝率': float(hd_dict.get((h_id, current_dist), 0.08)), '上仗頭馬距離': float(l_margin), '近況跑法': float(r_style)
                     }
                     race_features.append(features)
-                    horse_info.append({'場次': f"第 {race_no} 場", '馬號': int(row['馬號']), '馬匹': row['馬匹'], '騎師': jockey, '檔位': int(row['檔位']), '負磅': row['負磅'], '評分': rating})
+                    
+                    # 獨立提取各項子分數 (高/中/低化)
+                    ability_score = (rating + h_win * 100) / 2
+                    jt_score = (j_w + t_w) * 500
+                    venue_dist_score = (hv_dict.get((h_id, venue_str), 0.08) + hd_dict.get((h_id, current_dist), 0.08)) * 500
+                    
+                    horse_info.append({
+                        '場次': f"第 {race_no} 場", '馬號': int(row['馬號']), '馬匹': row['馬匹'], '騎師': jockey, 
+                        '檔位': int(row['檔位']), '負磅': row['負磅'], '評分': rating,
+                        '實力分': ability_score, '騎練分': jt_score, '同場往績': venue_dist_score
+                    })
                 
                 if race_features:
                     raw_scores = model.predict(pd.DataFrame(race_features))
                     win_probs = np.exp((raw_scores - np.max(raw_scores)) / 0.5) / np.sum(np.exp((raw_scores - np.max(raw_scores)) / 0.5))
                     for i, info in enumerate(horse_info):
                         info['勝率'] = win_probs[i]
-                        info['AI預測勝率(%)'] = round(win_probs[i] * 100, 2)
+                        info['IH指數'] = round(win_probs[i] * 100, 1)
+                        info['預估勝率(%)'] = round(win_probs[i] * 100, 2)
                         predictions_list.append(info)
         except: pass
     return pd.DataFrame(predictions_list) if predictions_list else pd.DataFrame()
+# --- 數值轉視覺化分級輔助函式 ---
+def get_level(val, low_th, high_th):
+    if val >= high_th: return "高"
+    elif val <= low_th: return "低"
+    else: return "中"
+
+def get_stars(prob):
+    if prob >= 0.20: return "⭐⭐⭐⭐"
+    elif prob >= 0.12: return "⭐⭐⭐"
+    elif prob >= 0.06: return "⭐⭐"
+    else: return "⭐"
 
 # --- UI 介面設計 ---
-st.title("🐎 賽馬 AI 戰術預測系統 (Ranker 17維度)")
-st.markdown("基於 XGBRanker 機器學習，結合 **17 維度終極特徵**（含同程勝率、頭馬距離、近況跑法）進行同場精準排序。")
+st.title("🐎 賽馬 AI 戰術預測系統 (17維度矩陣版)")
+st.markdown("基於 XGBRanker 機器學習，結合 **17 維度終極特徵**，並提供專業級的**單場多維度能力矩陣對比**。")
 st.divider()
 
 st.subheader("🗓️ 設定目標賽事")
@@ -170,7 +184,7 @@ if ignore_jockey:
     st.warning("已啟動「忽視騎師權重」模式：騎師與練馬師的勝率影響力已歸零。")
 
 # --- 按鈕佈局 ---
-col_btn1, col_btn2, col_btn3 = st.columns(3)
+col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
 action = None
 
 with col_btn1:
@@ -179,6 +193,8 @@ with col_btn2:
     if st.button("📊 單日回測", use_container_width=True): action = "backtest"
 with col_btn3:
     if st.button("🎯 策略推薦", use_container_width=True): action = "recommend"
+with col_btn4:
+    if st.button("📋 單場能力矩陣", use_container_width=True): action = "matrix"
 
 st.divider()
 
@@ -201,9 +217,8 @@ elif action == "backtest":
     with st.spinner("正在讀取歷史賽果並執行高速回測分析..."):
         model = load_ai_model()
         horse_memory, jockey_db, trainer_db, hj_dict, hv_dict, hd_dict = load_memory_databases()
-        
         session = requests.Session()
-        headers = {'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) Chrome/119.0.0.0 Safari/537.36'}
+        headers = {'User-Agent': 'Mozilla/5.0'}
         
         total_races, ai_top1_hit, ai_top3_catch_win, exact_match_count = 0, 0, 0, 0
         ai_top4_catch_counts = []
@@ -314,7 +329,7 @@ elif action == "backtest":
         else:
             st.warning("找不到該日期的歷史賽果或尚未有完賽資料。")
 
-# --- 功能 3：策略推薦 (基礎彩池 + 最佳策略) ---
+# --- 功能 3：策略推薦 ---
 elif action == "recommend":
     with st.spinner("AI 正在連線賽馬會，計算全彩池與最佳策略..."):
         df_pred = fetch_race_cards(target_date, venue_code, ignore_jockey)
@@ -349,3 +364,36 @@ elif action == "recommend":
                         else:
                             st.warning(f"**🎲 判斷: 混戰格局** (群龍無首，極易爆出大冷門)\n\n**💰 推薦**: 略過單邊獨贏，專攻大彩池【四連環複式互聯】")
                     st.divider()
+
+# --- ✨ 新功能 4：單場多維度能力比較矩陣 ---
+elif action == "matrix":
+    st.subheader(f"📋 單場多維度能力比較矩陣 - {target_date} ({venue_code})")
+    with st.spinner("正在讀取排位並建構多維能力矩陣..."):
+        df_pred = fetch_race_cards(target_date, venue_code, ignore_jockey)
+        if df_pred.empty:
+            st.error(f"無法取得 {target_date} 的排位資料。")
+        else:
+            races = sorted(df_pred['場次'].unique(), key=lambda x: int(x.replace('第 ', '').replace(' 場', '')))
+            selected_race = st.selectbox("請選擇要檢視的場次", options=races)
+            
+            sub_df = df_pred[df_pred['場次'] == selected_race].sort_values(by='勝率', ascending=False).reset_index(drop=True)
+            
+            # 建構比較表格
+            matrix_data = []
+            for _, row in sub_df.iterrows():
+                matrix_data.append({
+                    '馬號': row['馬號'],
+                    '馬名': row['馬匹'],
+                    'IH指數': row['IH指數'],
+                    '預估勝率': f"{row['AI預測勝率(%)']}%",
+                    '評級': get_stars(row['勝率']),
+                    '實力分': get_level(row['實力分'], 55, 75),
+                    '騎練分': get_level(row['騎練分'], 40, 60),
+                    '檔位分': "高" if row['檔位'] <= 5 else ("低" if row['檔位'] >= 11 else "中"),
+                    '同場往績': get_level(row['同場往績'], 40, 60)
+                })
+            
+            df_matrix = pd.DataFrame(matrix_data)
+            st.markdown(f"### 📊 [ {selected_race} ] 馬匹多維度能力對比表")
+            st.dataframe(df_matrix, hide_index=True, use_container_width=True)
+            st.info("💡 **指標說明**：IH指數由 AI 綜合排序轉化；實力分結合評分與歷史勝率；騎練分結合騎師與練馬師勝率；檔位分依內外檔自動評定；同場往績結合同地與同程勝率。")
