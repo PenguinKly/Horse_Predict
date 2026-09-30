@@ -132,7 +132,6 @@ def fetch_race_cards(date_str, venue_str, ignore_jockey=False):
                     }
                     race_features.append(features)
                     
-                    # 獨立提取各項子分數 (高/中/低化)
                     ability_score = (rating + h_win * 100) / 2
                     jt_score = (j_w + t_w) * 500
                     venue_dist_score = (hv_dict.get((h_id, venue_str), 0.08) + hd_dict.get((h_id, current_dist), 0.08)) * 500
@@ -149,11 +148,11 @@ def fetch_race_cards(date_str, venue_str, ignore_jockey=False):
                     for i, info in enumerate(horse_info):
                         info['勝率'] = win_probs[i]
                         info['IH指數'] = round(win_probs[i] * 100, 1)
-                        info['預估勝率(%)'] = round(win_probs[i] * 100, 2)
+                        info['AI預測勝率(%)'] = round(win_probs[i] * 100, 2)
                         predictions_list.append(info)
         except: pass
     return pd.DataFrame(predictions_list) if predictions_list else pd.DataFrame()
-# --- 數值轉視覺化分級輔助函式 ---
+
 def get_level(val, low_th, high_th):
     if val >= high_th: return "高"
     elif val <= low_th: return "低"
@@ -174,7 +173,7 @@ st.subheader("🗓️ 設定目標賽事")
 col1, col2 = st.columns(2)
 
 with col1:
-    target_date = st.text_input("賽事日期 (格式: YYYY/MM/DD)", value="2026/09/06")
+    target_date = st.text_input("賽事日期 (格式: YYYY/MM/DD)", value="2026/10/01")
 with col2:
     venue = st.selectbox("賽事場地", options=["ST (沙田)", "HV (跑馬地)"])
     venue_code = venue.split(" ")[0]
@@ -183,7 +182,6 @@ ignore_jockey = st.checkbox("🚫 忽視騎師權重 (純馬匹實力模式)", v
 if ignore_jockey:
     st.warning("已啟動「忽視騎師權重」模式：騎師與練馬師的勝率影響力已歸零。")
 
-# --- 按鈕佈局 ---
 col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
 action = None
 
@@ -198,7 +196,6 @@ with col_btn4:
 
 st.divider()
 
-# --- 功能 1：實戰預測 ---
 if action == "predict":
     with st.spinner("AI 正在連線賽馬會，進行 17 維度運算..."):
         df_pred = fetch_race_cards(target_date, venue_code, ignore_jockey)
@@ -211,7 +208,6 @@ if action == "predict":
                 display_df = group.sort_values(by='勝率', ascending=False).head(4)
                 st.dataframe(display_df[['馬號', '馬匹', '騎師', '檔位', '負磅', '評分', 'AI預測勝率(%)']], hide_index=True, use_container_width=True)
 
-# --- 功能 2：單日歷史回測 (極速版) ---
 elif action == "backtest":
     st.subheader(f"📊 單日歷史回測報告 (17維度) - {target_date} ({venue_code})")
     with st.spinner("正在讀取歷史賽果並執行高速回測分析..."):
@@ -329,7 +325,6 @@ elif action == "backtest":
         else:
             st.warning("找不到該日期的歷史賽果或尚未有完賽資料。")
 
-# --- 功能 3：策略推薦 ---
 elif action == "recommend":
     with st.spinner("AI 正在連線賽馬會，計算全彩池與最佳策略..."):
         df_pred = fetch_race_cards(target_date, venue_code, ignore_jockey)
@@ -365,7 +360,6 @@ elif action == "recommend":
                             st.warning(f"**🎲 判斷: 混戰格局** (群龍無首，極易爆出大冷門)\n\n**💰 推薦**: 略過單邊獨贏，專攻大彩池【四連環複式互聯】")
                     st.divider()
 
-# --- ✨ 新功能 4：單場多維度能力比較矩陣 ---
 elif action == "matrix":
     st.subheader(f"📋 單場多維度能力比較矩陣 - {target_date} ({venue_code})")
     with st.spinner("正在讀取排位並建構多維能力矩陣..."):
@@ -378,7 +372,6 @@ elif action == "matrix":
             
             sub_df = df_pred[df_pred['場次'] == selected_race].sort_values(by='勝率', ascending=False).reset_index(drop=True)
             
-            # 建構比較表格
             matrix_data = []
             for _, row in sub_df.iterrows():
                 matrix_data.append({
