@@ -147,16 +147,16 @@ def fetch_race_cards(date_str, venue_str, ignore_jockey=False):
                     win_probs = np.exp((raw_scores - np.max(raw_scores)) / 0.5) / np.sum(np.exp((raw_scores - np.max(raw_scores)) / 0.5))
                     for i, info in enumerate(horse_info):
                         info['勝率'] = win_probs[i]
-                        info['IH指數'] = round(win_probs[i] * 100, 1)
+                        info['AI 戰力指數'] = round(win_probs[i] * 100, 1)
                         info['AI預測勝率(%)'] = round(win_probs[i] * 100, 2)
                         predictions_list.append(info)
         except: pass
     return pd.DataFrame(predictions_list) if predictions_list else pd.DataFrame()
 
 def get_level(val, low_th, high_th):
-    if val >= high_th: return "高"
-    elif val <= low_th: return "低"
-    else: return "中"
+    if val >= high_th: return "🟢 高"
+    elif val <= low_th: return "🔴 低"
+    else: return "🟡 中"
 
 def get_stars(prob):
     if prob >= 0.20: return "⭐⭐⭐⭐"
@@ -374,19 +374,22 @@ elif action == "matrix":
             
             matrix_data = []
             for _, row in sub_df.iterrows():
+                draw_val = row['檔位']
+                draw_str = "🟢 高" if draw_val <= 5 else ("🔴 低" if draw_val >= 11 else "🟡 中")
+                
                 matrix_data.append({
                     '馬號': row['馬號'],
                     '馬名': row['馬匹'],
-                    'IH指數': row['IH指數'],
+                    'AI 戰力指數': row['AI 戰力指數'],
                     '預估勝率': f"{row['AI預測勝率(%)']}%",
                     '評級': get_stars(row['勝率']),
                     '實力分': get_level(row['實力分'], 55, 75),
                     '騎練分': get_level(row['騎練分'], 40, 60),
-                    '檔位分': "高" if row['檔位'] <= 5 else ("低" if row['檔位'] >= 11 else "中"),
+                    '檔位分': draw_str,
                     '同場往績': get_level(row['同場往績'], 40, 60)
                 })
             
             df_matrix = pd.DataFrame(matrix_data)
             st.markdown(f"### 📊 [ {selected_race} ] 馬匹多維度能力對比表")
             st.dataframe(df_matrix, hide_index=True, use_container_width=True)
-            st.info("💡 **指標說明**：IH指數由 AI 綜合排序轉化；實力分結合評分與歷史勝率；騎練分結合騎師與練馬師勝率；檔位分依內外檔自動評定；同場往績結合同地與同程勝率。")
+            st.info("💡 **指標說明**：🟢 高（優勢）、🟡 中（平平）、🔴 低（劣勢）。AI 戰力指數由 AI 綜合排序轉化；實力分結合評分與歷史勝率；騎練分結合騎師與練馬師勝率；檔位分依內外檔自動評定；同場往績結合同地與同程勝率。")
