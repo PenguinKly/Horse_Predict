@@ -16,6 +16,10 @@ st.set_page_config(
     layout="wide"
 )
 
+# 初始化 session_state 用來保存當前啟動的功能狀態
+if 'action' not in st.session_state:
+    st.session_state['action'] = None
+
 def clean_person_name(val):
     return re.sub(r'\(.*?\)', '', str(val)).strip()
 
@@ -183,18 +187,19 @@ if ignore_jockey:
     st.warning("已啟動「忽視騎師權重」模式：騎師與練馬師的勝率影響力已歸零。")
 
 col_btn1, col_btn2, col_btn3, col_btn4 = st.columns(4)
-action = None
 
 with col_btn1:
-    if st.button("🚀 實戰預測", use_container_width=True): action = "predict"
+    if st.button("🚀 實戰預測", use_container_width=True): st.session_state['action'] = "predict"
 with col_btn2:
-    if st.button("📊 單日回測", use_container_width=True): action = "backtest"
+    if st.button("📊 單日回測", use_container_width=True): st.session_state['action'] = "backtest"
 with col_btn3:
-    if st.button("🎯 策略推薦", use_container_width=True): action = "recommend"
+    if st.button("🎯 策略推薦", use_container_width=True): st.session_state['action'] = "recommend"
 with col_btn4:
-    if st.button("📋 單場能力矩陣", use_container_width=True): action = "matrix"
+    if st.button("📋 單場能力矩陣", use_container_width=True): st.session_state['action'] = "matrix"
 
 st.divider()
+
+action = st.session_state['action']
 
 if action == "predict":
     with st.spinner("AI 正在連線賽馬會，進行 17 維度運算..."):
